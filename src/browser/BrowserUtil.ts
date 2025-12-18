@@ -24,7 +24,8 @@ export default class BrowserUtil {
         { selector: '#bnp_btn_accept', label: 'Bing Cookie Accept' },
         { selector: '#bnp_close_link', label: 'Bing Cookie Close' },
         { selector: '#reward_pivot_earn', label: 'Rewards Pivot Earn' },
-        { selector: '//div[@id="cookieConsentContainer"]//button[contains(text(), "Accept")]', label: 'Legacy Cookie Accept', isXPath: true }
+        { selector: '//div[@id="cookieConsentContainer"]//button[contains(text(), "Accept")]', label: 'Legacy Cookie Accept', isXPath: true },
+        { selector: '#streak-protection-popup-close-cross', label: 'Program Restructure Close' }
     ]
 
     private static readonly OVERLAY_SELECTORS = {

@@ -23,6 +23,7 @@ RUN rm -rf node_modules \
     && npm cache clean --force
 
 # Install Chromium browsers
+ENV PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright
 RUN npx playwright install --with-deps chromium \
     && rm -rf /root/.cache /tmp/* /var/tmp/*
 
@@ -32,6 +33,13 @@ RUN npx playwright install --with-deps chromium \
 FROM node:22-slim AS runtime
 
 WORKDIR /usr/src/microsoft-rewards-script
+
+# 或者更简单的方法：直接覆盖 sources.list 文件
+ RUN echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
+     echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
+     echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm-backports main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
+     echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list
+
 
 # Set production environment variables
 ENV NODE_ENV=production \
@@ -82,14 +90,13 @@ COPY --from=builder /usr/src/microsoft-rewards-script/package*.json ./
 COPY --from=builder /usr/src/microsoft-rewards-script/node_modules ./node_modules
 
 # Copy scripts and config files
-COPY --chmod=755 src/run_daily.sh ./src/run_daily.sh
-COPY --chmod=644 src/crontab.template /etc/cron.d/microsoft-rewards-cron.template
-COPY --chmod=755 entrypoint.sh /usr/local/bin/entrypoint.sh
-COPY src/accounts.json ./src/accounts.json
+COPY crontab.txt .
+COPY --chmod=755 entrypoint.sh .
+COPY src/accounts.example.json ./src/accounts.json
 
-# Create log directory
-RUN mkdir -p /var/log
+# Create log directory and file
+RUN mkdir -p /var/log && touch /var/log/cron.log
 
-# Entrypoint handles TZ and launch
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["node", "dist/index.js"]
+# Entrypoint handles cron setup and launch
+ENTRYPOINT ["./entrypoint.sh"]
+CMD []

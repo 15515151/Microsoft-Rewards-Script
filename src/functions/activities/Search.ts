@@ -307,7 +307,9 @@ export class Search extends Workers {
 
                 // Delay between searches - 使用动态延迟
                 const dynamicDelay = this.getDynamicSearchDelay();
-                await this.bot.utils.waitRandom(dynamicDelay.min, dynamicDelay.max, 'normal')
+                const randomDelay = this.bot.utils.randomNumber(dynamicDelay.min, dynamicDelay.max, 'normal')
+                this.bot.log(this.bot.isMobile, 'SEARCH-BING', `搜索间隔等待: ${(randomDelay / 1000).toFixed(0)}秒 (${(randomDelay / 60000).toFixed(2)}分钟)`)
+                await this.bot.utils.wait(randomDelay)
                 return await this.bot.browser.func.getSearchPoints()
 
             } catch (error) {

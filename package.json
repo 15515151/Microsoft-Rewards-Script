@@ -17,9 +17,9 @@
   "homepage": "https://github.com/TheNetsky/Microsoft-Rewards-Script#readme",
   "scripts": {
     "clean": "rimraf dist",
-    "pre-build": "npm i && npm run clean && node -e \"process.exit(process.env.SKIP_PLAYWRIGHT_INSTALL?0:1)\" || npx playwright install chromium",
+    "pre-build": "npm i && npm run clean && npx playwright install chromium",
     "typecheck": "tsc --noEmit",
-    "build": "tsc",
+    "build": "tsc --project ./tsconfig.json",
     "start": "node --enable-source-maps ./dist/index.js",
     "ts-start": "node --loader ts-node/esm ./src/index.ts",
     "dev": "ts-node ./src/index.ts -dev",

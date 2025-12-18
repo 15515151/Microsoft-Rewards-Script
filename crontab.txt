@@ -1,0 +1,4 @@
+# 每天的7点和14点执行任务
+# 注意: 为了日志能正常记录，请确保 docker run 命令中使用了 -e TZ=<时区> 参数, 例如 TZ=Asia/Shanghai
+0 7,14 * * * PLAYWRIGHT_BROWSERS_PATH=0 /usr/local/bin/node /usr/src/microsoft-rewards-script/dist/index.js >> /var/log/cron.log 2>&1
+# Cron 任务要求末尾有一个空行

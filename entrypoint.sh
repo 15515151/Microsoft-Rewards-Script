@@ -1,41 +1,37 @@
-#!/bin/sh
+#!/bin/bash
+# 该脚本用于初始化容器环境、启动 cron 服务并整合日志输出
+
+# 立即退出（如果命令以非零状态退出）
 set -e
 
-# 设置时区
-if [ ! -z "$TZ" ]; then
+# 如果定义了 TZ 环境变量，则设置时区
+if [ -n "$TZ" ]; then
     ln -snf /usr/share/zoneinfo/$TZ /etc/localtime
     echo $TZ > /etc/timezone
+    echo "容器时区已设置为: $TZ"
 fi
 
-# 确保配置文件存在
-if [ ! -f "src/accounts.json" ]; then
-    echo "Error: accounts.json not found. Please mount it or create it."
-    exit 1
-fi
+# 准备日志文件并设置权限
+touch /var/log/cron.log
+chmod 0644 /var/log/cron.log
 
-# 设置 cron 任务
-if [ -f "/etc/cron.d/microsoft-rewards-cron.template" ]; then
-    # 替换模板中的占位符
-    sed -i "s|SCRIPT_PATH|/usr/src/microsoft-rewards-script/src/run_daily.sh|g" /etc/cron.d/microsoft-rewards-cron.template
-    
-    # 启用 cron 任务
-    cp /etc/cron.d/microsoft-rewards-cron.template /etc/cron.d/microsoft-rewards-cron
-    chmod 0644 /etc/cron.d/microsoft-rewards-cron
-    
-    # 启动 cron 服务
-    echo "Starting cron service..."
-    service cron start
-    
-    # 检查 cron 服务状态
-    if service cron status; then
-        echo "Cron service started successfully"
-    else
-        echo "Warning: Cron service failed to start"
-    fi
-else
-    echo "Warning: Cron template not found at /etc/cron.d/microsoft-rewards-cron.template"
-fi
+# 导出环境变量供 cron 使用 (关键修复)
+printenv | grep -E "^(PLAYWRIGHT_BROWSERS_PATH|AUTO_INSTALL_BROWSERS|TZ|NODE_ENV)" >> /etc/environment
 
-# 启动应用
-echo "Starting Microsoft Rewards Script..."
-exec "$@"
+# 加载 cron 任务
+echo "加载 cron 任务..."
+crontab /usr/src/microsoft-rewards-script/crontab.txt
+echo "cron 任务已加载。"
+
+# 在后台启动 cron 服务
+echo "启动 cron 服务 (后台)..."
+cron
+
+# 立即执行一次任务，并将输出重定向到日志文件
+echo "启动时执行一次初始任务 (日志将在下方显示)..."
+node /usr/src/microsoft-rewards-script/dist/index.js >> /var/log/cron.log 2>&1 &
+
+# 使用 tail -F 将日志文件内容实时输出到 stdout
+# 这会使容器保持运行，并且 docker logs 可以捕获到所有应用日志
+echo "---- 日志开始 ----"
+tail -F /var/log/cron.log

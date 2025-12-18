@@ -1,6 +1,12 @@
 services:
   microsoft-rewards-script:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - HTTP_PROXY=http://192.168.31.126:7890
+        - HTTPS_PROXY=http://192.168.31.126:7890
+        - NO_PROXY=localhost,127.0.0.1
     container_name: microsoft-rewards-script
     restart: unless-stopped
 
@@ -16,6 +22,7 @@ services:
       NODE_ENV: "production"
       CRON_SCHEDULE: "0 7 * * *" # Customize your schedule, use crontab.guru for formatting
       RUN_ON_START: "true" # Runs the script immediately on container startup
+      AUTO_INSTALL_BROWSERS: "1" # Automatically install Playwright browsers if missing
 
       # Add scheduled start-time randomization (uncomment to customize or disable, default: enabled)
       #MIN_SLEEP_MINUTES: "5"

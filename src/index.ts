@@ -84,6 +84,16 @@ export class MicrosoftRewardsBot {
     }
 
     async initialize() {
+        if (process.env.AUTO_INSTALL_BROWSERS === '1') {
+            log('main', 'SETUP', '检测到 AUTO_INSTALL_BROWSERS=1，正在检查/安装 Playwright 浏览器...', 'log')
+            try {
+                const { execSync } = await import('child_process')
+                execSync('npx playwright install chromium', { stdio: 'inherit' })
+                log('main', 'SETUP', 'Playwright 浏览器安装/检查完成。', 'log', 'green')
+            } catch (error) {
+                log('main', 'SETUP', `自动安装浏览器失败: ${error}`, 'error')
+            }
+        }
         this.accounts = loadAccounts()
     }
 
@@ -376,25 +386,18 @@ export class MicrosoftRewardsBot {
                 log('main','SUMMARY-DEBUG',`账户 ${summary.email} 收集 D:${summary.desktopCollected} M:${summary.mobileCollected} 总计:${summary.totalCollected} 错误:${summary.errors.length ? summary.errors.join(';') : '无'}`)
             }
         }
-        // 如果任何账户被标记为受损，不要退出；保持进程运行以使浏览器保持开启
+        // 如果任何账户被标记为受损，将发送警报，但进程将继续正常退出。
         if (this.compromisedModeActive || this.globalStandby.active) {
-            log('main','SECURITY','检测到受损或封禁。启用全局待机：在解决之前不会处理其他账户。保持进程运行。完成后按 CTRL+C 退出。安全检查由 @Light 提供','warn','yellow')
-            const standbyInterval = setInterval(() => {
-                log('main','SECURITY','仍在待机：会话保持开启以供手动恢复/审查...','warn','yellow')
-            }, 5 * 60 * 1000)
-            
-            // 进程退出时清理
-            process.once('SIGINT', () => { clearInterval(standbyInterval); process.exit(0) })
-            process.once('SIGTERM', () => { clearInterval(standbyInterval); process.exit(0) })
-            return
+            log('main','SECURITY','检测到受损或封禁。为了自动化，进程将正常退出。警报已发送。', 'warn', 'yellow')
         }
         // 如果在工作线程模式下（clusters>1）将摘要发送给主进程
         if (this.config.clusters > 1 && !cluster.isPrimary) {
             if (process.send) {
                 process.send({ type: 'summary', data: this.accountSummaries })
             }
-        } else {
-            // 单进程模式
+        } else if (this.config.clusters <= 1) {
+            // 单进程模式下，直接调用总结函数
+            await this.sendConclusion(this.accountSummaries)
         }
         process.exit()
     }
@@ -769,6 +772,31 @@ export class MicrosoftRewardsBot {
             log('main','INFO','想要更快的更新和增强的反检测？社区版本可用: https://discord.gg/kn3695Kx32')
         }
 
+        const now = new Date();
+        const sevenAmToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 7, 0, 0);
+        const twoPmToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 14, 0, 0);
+        let nextRunDate;
+
+        if (now.getTime() < sevenAmToday.getTime()) {
+            nextRunDate = sevenAmToday;
+        } else if (now.getTime() < twoPmToday.getTime()) {
+            nextRunDate = twoPmToday;
+        } else {
+            const tomorrow = new Date();
+            tomorrow.setDate(now.getDate() + 1);
+            nextRunDate = new Date(tomorrow.getFullYear(), tomorrow.getMonth(), tomorrow.getDate(), 7, 0, 0);
+        }
+
+        const year = nextRunDate.getFullYear();
+        const month = String(nextRunDate.getMonth() + 1).padStart(2, '0');
+        const day = String(nextRunDate.getDate()).padStart(2, '0');
+        const hours = String(nextRunDate.getHours()).padStart(2, '0');
+        const minutes = String(nextRunDate.getMinutes()).padStart(2, '0');
+        const seconds = String(nextRunDate.getSeconds()).padStart(2, '0');
+
+        const formattedNextRun = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+
+        log('main', '任务计划', `下一次启动时间: ${formattedNextRun}`);
     }
 
 
@@ -819,53 +847,85 @@ function shortErr(e: unknown): string {
     return s.substring(0, 120)
 }
 
-async function main() {
-    const rewardsBot = new MicrosoftRewardsBot(false)
+const LOCK_FILE = path.join(process.cwd(), 'run.lock')
 
-    const crashState = { restarts: 0 }
-    const config = rewardsBot.config
+function acquireLock(): boolean {
+    if (!cluster.isPrimary) return true
 
-    const attachHandlers = () => {
-        process.on('unhandledRejection', (reason) => {
-            log('main','FATAL','未处理的拒绝: ' + (reason instanceof Error ? reason.message : String(reason)), 'error')
-            gracefulExit(1)
-        })
-        process.on('uncaughtException', (err) => {
-            log('main','FATAL','未捕获的异常: ' + err.message, 'error')
-            gracefulExit(1)
-        })
-        process.on('SIGTERM', () => gracefulExit(0))
-        process.on('SIGINT', () => gracefulExit(0))
+    if (fs.existsSync(LOCK_FILE)) {
+        try {
+            const content = fs.readFileSync(LOCK_FILE, 'utf-8').trim()
+            if (content) {
+                const pid = parseInt(content)
+                try {
+                    process.kill(pid, 0)
+                    log('main', 'LOCK', `检测到另一个实例正在运行 (PID: ${pid})。正在退出以防止重复运行。`, 'warn')
+                    return false
+                } catch (e) {
+                    log('main', 'LOCK', `发现来自 PID ${pid} 的陈旧锁文件。接管锁。`, 'warn')
+                }
+            }
+        } catch (e) {
+            log('main', 'LOCK', `读取锁文件出错: ${e}。覆盖锁。`, 'warn')
+        }
     }
 
-    const gracefulExit = (code: number) => {
-        if (config?.crashRecovery?.autoRestart && code !== 0) {
-            const max = config.crashRecovery.maxRestarts ?? 2
-            if (crashState.restarts < max) {
-                const backoff = (config.crashRecovery.backoffBaseMs ?? 2000) * (crashState.restarts + 1)
-                log('main','CRASH-RECOVERY',`计划在 ${backoff}ms 后重启 (尝试 ${crashState.restarts + 1}/${max})`, 'warn','yellow')
-                setTimeout(() => {
-                    crashState.restarts++
-                    bootstrap()
-                }, backoff)
-                return
+    try {
+        fs.writeFileSync(LOCK_FILE, process.pid.toString(), 'utf-8')
+        return true
+    } catch (e) {
+        log('main', 'LOCK', `写入锁文件失败: ${e}`, 'error')
+        return false
+    }
+}
+
+function releaseLock() {
+    if (!cluster.isPrimary) return
+
+    try {
+        if (fs.existsSync(LOCK_FILE)) {
+            const content = fs.readFileSync(LOCK_FILE, 'utf-8').trim()
+            const pid = parseInt(content)
+            if (pid === process.pid) {
+                fs.unlinkSync(LOCK_FILE)
             }
         }
-        process.exit(code)
+    } catch (e) {
+        // ignore
+    }
+}
+
+async function main() {
+    // 尝试获取锁
+    if (!acquireLock()) {
+        process.exit(0)
     }
 
-    const bootstrap = async () => {
-        try {
-            await rewardsBot.initialize()
-            await rewardsBot.run()
-        } catch (e) {
-            log('main','MAIN-ERROR','运行期间致命错误: ' + (e instanceof Error ? e.message : e),'error')
-            gracefulExit(1)
-        }
-    }
+    // 注册退出时的锁释放
+    process.on('exit', () => {
+        releaseLock()
+    })
 
-    attachHandlers()
-    await bootstrap()
+    const rewardsBot = new MicrosoftRewardsBot(false)
+
+    process.on('unhandledRejection', (reason) => {
+        log('main','FATAL','未处理的拒绝: ' + (reason instanceof Error ? reason.message : String(reason)), 'error')
+        process.exit(1)
+    })
+    process.on('uncaughtException', (err) => {
+        log('main','FATAL','未捕获的异常: ' + err.message, 'error')
+        process.exit(1)
+    })
+    process.on('SIGTERM', () => process.exit(0))
+    process.on('SIGINT', () => process.exit(0))
+
+    try {
+        await rewardsBot.initialize()
+        await rewardsBot.run()
+    } catch (e) {
+        log('main','MAIN-ERROR','运行期间致命错误: ' + (e instanceof Error ? e.message : e),'error')
+        process.exit(1)
+    }
 }
 
 // 启动机器人
